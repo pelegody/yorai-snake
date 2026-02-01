@@ -231,14 +231,27 @@
   function hideNamePrompt() {
     nameOverlay.classList.remove("show");
   }
-  function acceptNameFromPrompt() {
+  async function acceptNameFromPrompt() {
     const saved = setSavedName(namePromptInput.value);
     nameAccepted = true;
     hideNamePrompt();
-    elNetStatus.textContent = `Ready as "${saved}". Press Start.`;
+
+    // Start immediately
+    try {
+      elNetStatus.textContent = "Creating session…";
+      const s = await newSession();
+      hideOverlay();
+      resetGame(s.seed);
+      running = true;
+      paused = false;
+      startTicking();
+      render();
+    } catch (e) {
+      elNetStatus.textContent = "Failed to start session. Is backend deployed?";
+    }
   }
 
-  namePromptBtn.onclick = acceptNameFromPrompt;
+  namePromptBtn.onclick = () => { acceptNameFromPrompt(); };
   namePromptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") acceptNameFromPrompt();
   });
