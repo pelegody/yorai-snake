@@ -8,11 +8,13 @@
     :root { color-scheme: dark; }
     body { margin:0; background:#0b0b0b; color:#eaeaea; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
 
+    /* Wider overall page */
     .wrap { max-width: 1200px; margin: 0 auto; padding: 14px; }
 
     .topbar { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
     .panel { background:#121212; border:1px solid #2a2a2a; border-radius:12px; padding:10px; }
 
+    /* Layout: game big, leaderboard small */
     .row {
       display: grid;
       grid-template-columns: 3fr 1fr;
@@ -21,16 +23,20 @@
     }
     @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
 
+    /* Keep canvas fitting the viewport height */
     .game-panel { padding: 10px; }
     canvas {
       background:#050505;
       border:1px solid #2a2a2a;
       border-radius:12px;
       display:block;
+
+      /* key: never overflow vertically */
       width: 100%;
       height: auto;
-      max-height: calc(100vh - 210px);
+      max-height: calc(100vh - 210px); /* topbar + padding */
       aspect-ratio: 1 / 1;
+
       image-rendering: pixelated;
     }
 
@@ -40,15 +46,14 @@
     }
     button { cursor:pointer; }
     button:hover { border-color:#555; }
-
     .muted { color:#a8a8a8; font-size: 13px; }
-
     .scores { margin:0; padding-left: 18px; font-size: 13px; line-height: 1.3; }
-
-    .kbd { padding:2px 6px; border:1px solid #333; border-bottom-width:2px; border-radius:6px; font-size:12px; }
+    .kbd { padding:2px 6px; border:1px solid #333; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+    .status { font-variant-numeric: tabular-nums; }
 
     .panel.leaderboard { padding: 10px; max-height: 380px; overflow: auto; }
 
+    /* Score always visible + final score overlay */
     .score-pill {
       display:inline-flex;
       align-items:baseline;
@@ -57,6 +62,8 @@
       border:1px solid #2a2a2a;
       border-radius:999px;
       background: rgba(0,0,0,0.25);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
     .score-pill strong { font-size: 20px; }
 
@@ -71,7 +78,6 @@
       padding: 16px;
     }
     .overlay.show { display: flex; }
-
     .overlay-card {
       width: min(520px, 100%);
       background: #121212;
@@ -81,107 +87,94 @@
       text-align: center;
       box-shadow: 0 12px 40px rgba(0,0,0,0.6);
     }
-
     .final-score {
       font-size: 44px;
       font-weight: 800;
       margin: 10px 0 6px;
+      font-variant-numeric: tabular-nums;
     }
-
-    .overlay-actions {
-      display:flex;
-      gap:10px;
-      justify-content:center;
-      flex-wrap:wrap;
-      margin-top: 12px;
-    }
-
-    /* Hide top name input (we use center overlay instead) */
-    #name { display:none; }
+    .overlay-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top: 12px; }
   </style>
 </head>
 <body>
-<div class="wrap">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="panel">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div><strong>Snake</strong></div>
+          <div class="score-pill">Score <strong id="score">0</strong></div>
+        </div>
+        <div class="muted">
+          Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span>,
+          pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
+        </div>
+        <div class="muted">
+          Bonus: 25% chance after eating food. Lasts 10–20s. Grants <strong>remaining seconds</strong> points. Doesn’t grow snake.
+        </div>
+      </div>
 
-  <div class="topbar">
-    <div class="panel">
-      <div style="display:flex; gap:10px; align-items:center;">
-        <strong>Snake</strong>
-        <div class="score-pill">Score <strong id="score">0</strong></div>
-      </div>
-      <div class="muted">
-        Controls:
-        <span class="kbd">↑</span><span class="kbd">↓</span>
-        <span class="kbd">←</span><span class="kbd">→</span>
-        pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
-      </div>
-      <div class="muted">
-        Bonus: 25% chance, lasts 10–20s, worth remaining seconds.
+      <div class="panel" style="min-width: 280px;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="name" maxlength="16" placeholder="Name (for leaderboard)" />
+          <button id="startBtn">Start</button>
+          <button id="muteBtn">Mute</button>
+        </div>
+        <div class="muted" id="netStatus">Connecting…</div>
       </div>
     </div>
 
-    <div class="panel" style="min-width: 280px;">
-      <input id="name" />
-      <button id="startBtn">Start</button>
-      <button id="muteBtn">Mute</button>
-      <div class="muted" id="netStatus">Loading…</div>
+    <div style="height:10px;"></div>
+
+    <div class="row">
+      <div class="panel game-panel">
+        <!-- Keep internal resolution moderate; CSS handles fitting -->
+        <canvas id="c" width="720" height="720"></canvas>
+        <div class="muted" id="bonusStatus" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="panel leaderboard">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <strong>Top 5 (online)</strong>
+          <button id="refreshBtn">Refresh</button>
+        </div>
+        <ol id="scores" class="scores"></ol>
+        <div class="muted">Scores are verified server-side by replaying your run (seed + inputs).</div>
+      </div>
     </div>
   </div>
 
-  <div style="height:10px;"></div>
-
-  <div class="row">
-
-    <div class="panel game-panel">
-      <canvas id="c" width="720" height="720"></canvas>
-      <div class="muted" id="bonusStatus" style="margin-top:8px;"></div>
-    </div>
-
-    <div class="panel leaderboard">
-      <div style="display:flex; justify-content:space-between;">
-        <strong>Top 5 (online)</strong>
-        <button id="refreshBtn">Refresh</button>
+  <!-- Game Over overlay -->
+  <div id="overlay" class="overlay" role="dialog" aria-modal="true" aria-label="Game over">
+    <div class="overlay-card">
+      <div class="muted">Game over</div>
+      <div class="final-score" id="finalScore">0</div>
+      <div class="muted" id="finalNote">Submitting score…</div>
+      <div class="overlay-actions">
+        <button id="playAgainBtn">Play again</button>
+        <button id="closeOverlayBtn">Close</button>
       </div>
-      <ol id="scores" class="scores"></ol>
-    </div>
-
-  </div>
-</div>
-
-<!-- GAME OVER -->
-<div id="overlay" class="overlay">
-  <div class="overlay-card">
-    <div class="muted">Game over</div>
-    <div class="final-score" id="finalScore">0</div>
-    <div class="muted" id="finalNote">Submitting score…</div>
-    <div class="overlay-actions">
-      <button id="playAgainBtn">Play again</button>
-      <button id="closeOverlayBtn">Close</button>
     </div>
   </div>
-</div>
-
-<!-- NAME PROMPT -->
-<div id="nameOverlay" class="overlay">
-  <div class="overlay-card">
-    <div style="font-weight:700;font-size:18px;">Enter your name</div>
-    <div class="muted" style="margin-top:6px;">Used for the leaderboard</div>
-
-    <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-      <input id="namePromptInput" maxlength="16" placeholder="Name (max 16)" style="min-width:260px;">
-      <button id="namePromptBtn">Continue</button>
-    </div>
-  </div>
-</div>
 
 <script>
 (() => {
+  // ---------- CONFIG ----------
+  const GRID = 24;
+  const TICK_MS = 110;
+  const BONUS_CHANCE = 0.25;
+  const BONUS_MIN = 10;
+  const BONUS_MAX = 20;
   const API_BASE = "/.netlify/functions";
+  // ---------------------------
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
 
   const elScore = document.getElementById("score");
   const elBonusStatus = document.getElementById("bonusStatus");
   const elScores = document.getElementById("scores");
   const elNetStatus = document.getElementById("netStatus");
+  const elName = document.getElementById("name");
 
   const startBtn = document.getElementById("startBtn");
   const refreshBtn = document.getElementById("refreshBtn");
@@ -190,166 +183,439 @@
   const overlay = document.getElementById("overlay");
   const finalScoreEl = document.getElementById("finalScore");
   const finalNoteEl = document.getElementById("finalNote");
-
   const playAgainBtn = document.getElementById("playAgainBtn");
   const closeOverlayBtn = document.getElementById("closeOverlayBtn");
 
-  const nameOverlay = document.getElementById("nameOverlay");
-  const namePromptInput = document.getElementById("namePromptInput");
-  const namePromptBtn = document.getElementById("namePromptBtn");
+  // Images
+  const imgSnake = new Image(); imgSnake.src = "snake.png";
+  const imgFood  = new Image(); imgFood.src  = "food.png";
+  const imgBonus = new Image(); imgBonus.src = "bonus.png";
+  const hasImg = (img) => img && img.complete && img.naturalWidth > 0;
 
-  let session = null;
+  // Sounds
+  const sEat0 = new Audio("eat0.mp3");
+  const sEat1 = new Audio("eat1.mp3");
+  const sBonus = new Audio("bonus.mp3");
+  const sLose = new Audio("lose.mp3");
+  let muted = false;
+  let eatFlip = 0;
 
-  // If your game code defines these, great. If not, we define safe defaults to avoid JS crashing.
-  if (typeof window.tickCount === "undefined") window.tickCount = 0;
-  if (typeof window.inputEvents === "undefined") window.inputEvents = [];
-
-  // ---------- NAME STORAGE ----------
-  const NAME_KEY = "snake:name";
-
-  function sanitizeName(n) {
-    return String(n || "")
-      .replace(/[^a-zA-Z0-9 _.-]/g, "")
-      .trim()
-      .slice(0, 16);
+  function play(sound) {
+    if (muted) return;
+    try { sound.currentTime = 0; sound.play(); } catch {}
   }
 
-  function getSavedName() {
-    return sanitizeName(localStorage.getItem(NAME_KEY) || "");
-  }
-
-  function setSavedName(n) {
-    const name = sanitizeName(n) || "anon";
-    localStorage.setItem(NAME_KEY, name);
-    if (session) session.name = name;
-    return name;
-  }
-
-  function showNamePrompt() {
-    nameOverlay.classList.add("show");
-    namePromptInput.value = getSavedName();
-    startBtn.disabled = true;
-    elNetStatus.textContent = "Enter name to continue…";
-    setTimeout(() => namePromptInput.focus(), 0);
-  }
-
-  function hideNamePrompt() {
-    nameOverlay.classList.remove("show");
-    startBtn.disabled = false;
-    elNetStatus.textContent = "Ready. Press Start.";
-  }
-
-  namePromptBtn.onclick = () => {
-    setSavedName(namePromptInput.value);
-    hideNamePrompt();
+  muteBtn.onclick = () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? "Unmute" : "Mute";
   };
 
-  namePromptInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") namePromptBtn.click();
+  // PRNG
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function() {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- GAME STATE ----------
+  let running = false;
+  let paused = false;
+
+  let snake = [];
+  let dir = {x:1, y:0};
+  let pendingDir = null;
+
+  let food = null;
+  let bonus = null; // {x,y, expiresTick, totalSec}
+  let score = 0;
+
+  let tickHandle = null;
+  let tickCount = 0;
+
+  let session = null;
+  let rng = null;
+  let inputEvents = [];
+
+  // ---------- HELPERS ----------
+  function cellSize() { return Math.floor(canvas.width / GRID); }
+  function drawCellImage(img, x, y) {
+    const cs = cellSize();
+    ctx.drawImage(img, x * cs, y * cs, cs, cs);
+  }
+  function drawCellRect(x, y) {
+    const cs = cellSize();
+    ctx.fillRect(x * cs, y * cs, cs, cs);
+  }
+  function eq(a,b){ return a.x===b.x && a.y===b.y; }
+  function inBounds(p) { return p.x>=0 && p.x<GRID && p.y>=0 && p.y<GRID; }
+  function isOccupied(p){ return snake.some(s => s.x===p.x && s.y===p.y); }
+
+  function randomEmptyCell() {
+    for (let i=0;i<200;i++){
+      const x = Math.floor(rng() * GRID);
+      const y = Math.floor(rng() * GRID);
+      const p = {x,y};
+      if (!isOccupied(p) && (!food || !eq(p, food)) && (!bonus || !eq(p, bonus))) return p;
+    }
+    for (let y=0;y<GRID;y++){
+      for (let x=0;x<GRID;x++){
+        const p = {x,y};
+        if (!isOccupied(p) && (!food || !eq(p, food)) && (!bonus || !eq(p, bonus))) return p;
+      }
+    }
+    return null;
+  }
+
+  function setDir(newDir) {
+    if (newDir.x === -dir.x && newDir.y === -dir.y) return;
+    pendingDir = newDir;
+  }
+
+  function dirCodeFromVec(v){
+    if (v.x===0 && v.y===-1) return "U";
+    if (v.x===0 && v.y===1) return "D";
+    if (v.x===-1 && v.y===0) return "L";
+    if (v.x===1 && v.y===0) return "R";
+    return "R";
+  }
+
+  function recordInput(code) {
+    inputEvents.push({ t: tickCount + 1, d: code }); // applied next tick (matches client)
+  }
+
+  // ---------- BONUS ----------
+  function maybeSpawnBonus() {
+    if (bonus) return;
+    if (rng() >= BONUS_CHANCE) return;
+
+    const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN;
+    const pos = randomEmptyCell();
+    if (!pos) return;
+
+    const expiresTick = tickCount + Math.ceil((sec * 1000) / TICK_MS);
+    bonus = { x: pos.x, y: pos.y, expiresTick, totalSec: sec };
+  }
+
+  function bonusRemainingSeconds() {
+    if (!bonus) return 0;
+    const ticksLeft = bonus.expiresTick - tickCount;
+    if (ticksLeft <= 0) return 0;
+    return Math.ceil((ticksLeft * TICK_MS) / 1000);
+  }
+
+  function setScore(newScore) {
+    score = newScore;
+    elScore.textContent = String(score);
+  }
+
+  // ---------- OVERLAY ----------
+  function showGameOverOverlay() {
+    finalScoreEl.textContent = String(score);
+    finalNoteEl.textContent = "Submitting score…";
+    overlay.classList.add("show");
+  }
+  function hideOverlay() {
+    overlay.classList.remove("show");
+  }
+
+  function startTicking() {
+    if (tickHandle) clearInterval(tickHandle);
+
+    tickHandle = setInterval(() => {
+      try {
+        step();
+      } catch (e) {
+        console.error("step crashed:", e);
+        running = false;
+        paused = false;
+        if (tickHandle) clearInterval(tickHandle);
+        tickHandle = null;
+      }
+    }, TICK_MS);
+  }
+
+  playAgainBtn.onclick = () => {
+    hideOverlay();
+    if (session?.seed != null) {
+      resetGame(session.seed);
+      running = true;
+      paused = false;
+      startTicking();
+    }
+  };
+  closeOverlayBtn.onclick = hideOverlay;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) hideOverlay(); });
+
+  // ---------- RENDER ----------
+  function render() {
+    ctx.clearRect(0,0,canvas.width, canvas.height);
+    const cs = cellSize();
+
+    // grid faint
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = "#2a2a2a";
+    for (let i=1;i<GRID;i++){
+      ctx.beginPath(); ctx.moveTo(i*cs,0); ctx.lineTo(i*cs, canvas.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*cs); ctx.lineTo(canvas.width, i*cs); ctx.stroke();
+    }
+    ctx.restore();
+
+    // food
+    if (food) {
+      if (hasImg(imgFood)) drawCellImage(imgFood, food.x, food.y);
+      else { ctx.fillStyle = "#ff6b6b"; drawCellRect(food.x, food.y); }
+    }
+
+    // bonus
+    if (bonus) {
+      if (hasImg(imgBonus)) drawCellImage(imgBonus, bonus.x, bonus.y);
+      else { ctx.fillStyle = "#ffd93d"; drawCellRect(bonus.x, bonus.y); }
+    }
+
+    // snake
+    for (let i=0;i<snake.length;i++){
+      const s = snake[i];
+      if (hasImg(imgSnake)) drawCellImage(imgSnake, s.x, s.y);
+      else { ctx.fillStyle = i===0 ? "#6ee7b7" : "#34d399"; drawCellRect(s.x, s.y); }
+    }
+
+    // status under canvas
+    if (bonus) {
+      const rem = bonusRemainingSeconds();
+      elBonusStatus.textContent = `Bonus active: ${rem}s remaining (worth ${rem} points)`;
+    } else {
+      elBonusStatus.textContent = paused ? "Paused" : (running ? "" : "Press Start");
+    }
+  }
+
+  // ---------- GAME LOOP ----------
+  function resetGame(seed) {
+    rng = mulberry32(seed);
+
+    setScore(0);
+    tickCount = 0;
+    inputEvents = [];
+    eatFlip = 0;
+
+    const mid = Math.floor(GRID/2);
+    snake = [{x:mid, y:mid}, {x:mid-1,y:mid}, {x:mid-2,y:mid}, {x:mid-3,y:mid}];
+    dir = {x:1,y:0};
+    pendingDir = null;
+
+    bonus = null;
+    food = randomEmptyCell();
+
+    render();
+  }
+
+  function lose() {
+    running = false;
+    paused = false;
+    if (tickHandle) clearInterval(tickHandle);
+    tickHandle = null;
+
+    play(sLose);
+    elBonusStatus.textContent = "Game over. Press R to restart.";
+
+    showGameOverOverlay();
+
+    submitScore()
+      .then((verified) => {
+        if (verified != null) finalNoteEl.textContent = `Verified score: ${verified}`;
+        else finalNoteEl.textContent = "Submitted.";
+      })
+      .catch((e) => {
+        finalNoteEl.textContent = "Submit failed: " + (e?.message || "unknown");
+      });
+  }
+
+  function step() {
+    if (!running || paused) return;
+
+    tickCount++;
+
+    if (pendingDir) { dir = pendingDir; pendingDir = null; }
+
+    const head = snake[0];
+    const next = {x: head.x + dir.x, y: head.y + dir.y};
+
+    if (!inBounds(next)) return lose();
+
+    const willEatFood = food && eq(next, food);
+    const willEatBonus = bonus && eq(next, bonus);
+
+    const hitsBody = snake.some((s, idx) =>
+      (s.x===next.x && s.y===next.y) && !(idx===snake.length-1 && !willEatFood)
+    );
+    if (hitsBody) return lose();
+
+    snake.unshift(next);
+
+    if (bonus && tickCount >= bonus.expiresTick) bonus = null;
+
+    if (willEatFood) {
+      setScore(score + 1);
+
+      play(eatFlip % 2 === 0 ? sEat0 : sEat1);
+      eatFlip++;
+
+      food = randomEmptyCell();
+      maybeSpawnBonus();
+    } else if (willEatBonus) {
+      const rem = bonusRemainingSeconds();
+      setScore(score + rem);
+
+      play(sBonus);
+
+      snake.pop();
+      bonus = null;
+    } else {
+      snake.pop();
+    }
+
+    render();
+  }
+
+  // ---------- INPUT ----------
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+
+    if (k === " "){
+      if (!running) return;
+      paused = !paused;
+      elBonusStatus.textContent = paused ? "Paused" : "";
+      return;
+    }
+    if (k === "r") {
+      e.preventDefault();
+
+      // Remove focus from inputs / overlay buttons
+      if (document.activeElement && document.activeElement.blur) {
+        document.activeElement.blur();
+      }
+
+      // If no session yet, behave like Start
+      if (session?.seed == null) {
+        startBtn.click();
+        return;
+      }
+
+      hideOverlay();
+      resetGame(session.seed);
+      running = true;
+      paused = false;
+      startTicking();
+      return;
+    }
+
+    const before = dirCodeFromVec(pendingDir || dir);
+
+    if (k === "arrowup") { e.preventDefault(); setDir({x:0,y:-1}); }
+    else if (k === "arrowdown") { e.preventDefault(); setDir({x:0,y:1}); }
+    else if (k === "arrowleft") { e.preventDefault(); setDir({x:-1,y:0}); }
+    else if (k === "arrowright") { e.preventDefault(); setDir({x:1,y:0}); }
+    else return;
+
+    const after = dirCodeFromVec(pendingDir || dir);
+    if (after !== before) recordInput(after);
   });
 
-  // ---------- API ----------
+  // ---------- LEADERBOARD ----------
   async function apiGet(path) {
-    const r = await fetch(API_BASE + path, { cache: "no-store" });
+    const r = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }
   async function apiPost(path, body) {
-    const r = await fetch(API_BASE + path, {
+    const r = await fetch(`${API_BASE}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {"content-type":"application/json"},
       body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }
 
-  function renderTop5(list) {
+  function renderTop5(items) {
     elScores.innerHTML = "";
-    (list || []).forEach((it) => {
+    for (const it of items) {
       const li = document.createElement("li");
       li.textContent = `${it.name} — ${it.score}`;
       elScores.appendChild(li);
-    });
+    }
   }
 
   async function refreshTop5() {
     try {
-      const d = await apiGet("/top5");
-      renderTop5(d.top5 || []);
+      const data = await apiGet("/top5");
+      renderTop5(data.top5 || []);
+      elNetStatus.textContent = "Online leaderboard loaded.";
     } catch (e) {
-      // keep UI alive even if backend is down
-      elNetStatus.textContent = "Leaderboard error: " + (e?.message || "unknown");
+      elNetStatus.textContent = "Leaderboard failed: " + (e?.message || "unknown");
     }
   }
 
   async function newSession() {
-    const name = getSavedName() || "anon";
-    const s = await apiPost("/new", { name });
-    session = s;
+    const name = (elName.value || "").trim().slice(0,16) || "anon";
+    const data = await apiPost("/new", { name });
+    session = data;
     session.name = name;
     elNetStatus.textContent = "Session ready.";
-    return s;
+    return data;
   }
 
-  // Optional: call this from your real game-over logic
-  async function submitScoreSafe() {
-    try {
-      if (!session) return;
-      const res = await apiPost("/submit", {
-        name: session.name,
-        sessionId: session.sessionId,
-        sig: session.sig,
-        seed: session.seed,
-        tickCount: window.tickCount,
-        inputs: window.inputEvents
-      });
+  async function submitScore() {
+    if (!session) return null;
+    const name = (session?.name || (elName.value || "")).trim().slice(0,16) || "anon";
 
-      if (res.ok) {
-        finalNoteEl.textContent = "Verified score: " + res.verifiedScore;
-        await refreshTop5();
-      } else {
-        finalNoteEl.textContent = "Submit rejected: " + (res.reason || "unknown");
-      }
-    } catch (e) {
-      finalNoteEl.textContent = "Submit failed: " + (e?.message || "unknown");
+    const payload = {
+      name,
+      sessionId: session.sessionId,
+      sig: session.sig,
+      seed: session.seed,
+      tickCount,
+      inputs: inputEvents,
+    };
+
+    const res = await apiPost("/submit", payload);
+    if (res.ok) {
+      elNetStatus.textContent = `Submitted. Verified score: ${res.verifiedScore}.`;
+      await refreshTop5();
+      return res.verifiedScore;
+    } else {
+      elNetStatus.textContent = `Submit rejected: ${res.reason || "unknown"}`;
+      return null;
     }
   }
 
-  // ---------- BUTTONS ----------
-  refreshBtn.onclick = () => refreshTop5();
+  // ---------- START ----------
+  startBtn.onclick = async () => {
+    try {
+      elNetStatus.textContent = "Creating session…";
+      const s = await newSession();
+      hideOverlay();
+      resetGame(s.seed);
+      running = true;
+      paused = false;
 
-  // If your real game code already sets startBtn.onclick, KEEP IT.
-  // This fallback only creates a session and updates status.
-  if (!startBtn.onclick) {
-    startBtn.onclick = async () => {
-      try {
-        elNetStatus.textContent = "Creating session…";
-        await newSession();
-        elNetStatus.textContent = "Session ready. (Paste your game code to start playing)";
-      } catch (e) {
-        elNetStatus.textContent = "Failed to start session.";
-      }
-    };
-  }
+      if (tickHandle) clearInterval(tickHandle);
+      tickHandle = setInterval(step, TICK_MS);
 
-  // mute placeholder (your full game had audio logic; keep yours if present)
-  let muted = false;
-  muteBtn.onclick = () => {
-    muted = !muted;
-    muteBtn.textContent = muted ? "Unmute" : "Mute";
+      render();
+    } catch (e) {
+      elNetStatus.textContent = "Failed to start session. Is backend deployed?";
+    }
   };
 
-  // ---------- INIT ----------
-  const saved = getSavedName();
-  if (saved) {
-    hideNamePrompt();
-  } else {
-    showNamePrompt();
-  }
+  refreshBtn.onclick = () => refreshTop5();
 
-  elBonusStatus.textContent = "";
   refreshTop5();
+  render();
 })();
 </script>
 </body>
