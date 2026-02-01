@@ -158,7 +158,7 @@
     </div>
   </div>
 
-  <!-- Name prompt overlay (shown on first visit) -->
+  <!-- Name prompt overlay (ALWAYS shown on page load; prefilled with last value) -->
   <div id="nameOverlay" class="overlay" role="dialog" aria-modal="true" aria-label="Enter your name">
     <div class="overlay-card">
       <div style="font-weight:800;font-size:18px;">Enter your name</div>
@@ -206,8 +206,9 @@
   const namePromptInput = document.getElementById("namePromptInput");
   const namePromptBtn = document.getElementById("namePromptBtn");
 
-  // ---------- NAME (persist once) ----------
+  // ---------- NAME (always prompt; prefill last) ----------
   const NAME_KEY = "snake:name";
+  let nameAccepted = false;
 
   function sanitizeName(n) {
     return String(n || "").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 16);
@@ -218,28 +219,30 @@
   function setSavedName(n) {
     const name = sanitizeName(n) || "anon";
     localStorage.setItem(NAME_KEY, name);
-    // (Optional) keep the hidden input in sync, in case anything reads it
-    elName.value = name;
+    elName.value = name; // keep hidden input in sync
     return name;
   }
-  function showNamePrompt() {
+  function showNamePromptAlways() {
     nameOverlay.classList.add("show");
-    namePromptInput.value = getSavedName();
+    namePromptInput.value = getSavedName(); // prefill last
+    nameAccepted = false;
     setTimeout(() => namePromptInput.focus(), 0);
   }
   function hideNamePrompt() {
     nameOverlay.classList.remove("show");
   }
-
-  namePromptBtn.onclick = () => {
+  function acceptNameFromPrompt() {
     const saved = setSavedName(namePromptInput.value);
+    nameAccepted = true;
     hideNamePrompt();
     elNetStatus.textContent = `Ready as "${saved}". Press Start.`;
-  };
+  }
+
+  namePromptBtn.onclick = acceptNameFromPrompt;
   namePromptInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") namePromptBtn.click();
+    if (e.key === "Enter") acceptNameFromPrompt();
   });
-  nameOverlay.addEventListener("click", (e) => { if (e.target === nameOverlay) namePromptBtn.click(); });
+  // Clicking the dark backdrop does NOT auto-accept; keep forcing a deliberate action.
 
   // Images
   const imgSnake = new Image(); imgSnake.src = "snake.png";
@@ -540,6 +543,9 @@
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
 
+    // If name prompt is open, don't control the game
+    if (nameOverlay.classList.contains("show")) return;
+
     if (k === " "){
       if (!running) return;
       paused = !paused;
@@ -549,12 +555,10 @@
     if (k === "r") {
       e.preventDefault();
 
-      // Remove focus from inputs / overlay buttons
       if (document.activeElement && document.activeElement.blur) {
         document.activeElement.blur();
       }
 
-      // If no session yet, behave like Start
       if (session?.seed == null) {
         startBtn.click();
         return;
@@ -617,7 +621,6 @@
 
   async function newSession() {
     const name = getSavedName() || "anon";
-    // keep hidden input aligned (in case you ever re-show it)
     elName.value = name;
 
     const data = await apiPost("/new", { name });
@@ -653,10 +656,10 @@
   // ---------- START ----------
   startBtn.onclick = async () => {
     try {
-      // Require name once before allowing play
-      if (!getSavedName()) {
-        showNamePrompt();
-        elNetStatus.textContent = "Enter a name to continue.";
+      // Always require the user to confirm a name this page load
+      if (!nameAccepted) {
+        showNamePromptAlways();
+        elNetStatus.textContent = "Enter your name to continue.";
         return;
       }
 
@@ -679,14 +682,9 @@
   refreshBtn.onclick = () => refreshTop5();
 
   // ---------- INIT ----------
-  const savedName = getSavedName();
-  if (savedName) {
-    elNetStatus.textContent = `Ready as "${savedName}". Press Start.`;
-    elName.value = savedName;
-  } else {
-    elNetStatus.textContent = "Enter your name to start.";
-    showNamePrompt();
-  }
+  // ALWAYS prompt on landing (prefilled with last value)
+  showNamePromptAlways();
+  elNetStatus.textContent = "Enter your name to start.";
 
   refreshTop5();
   render();
