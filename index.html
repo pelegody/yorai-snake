@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snake</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; background:#0b0b0b; color:#eaeaea; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+    .topbar { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .panel { background:#121212; border:1px solid #2a2a2a; border-radius:12px; padding:12px; }
+    canvas { background:#050505; border:1px solid #2a2a2a; border-radius:12px; display:block; width:100%; height:auto; image-rendering: pixelated; }
+    .row { display:flex; gap:12px; align-items:stretch; flex-wrap:wrap; }
+    .row > * { flex: 1 1 280px; }
+    input, button {
+      background:#1a1a1a; color:#eaeaea; border:1px solid #333; border-radius:10px;
+      padding:10px 12px; font-size:14px;
+    }
+    button { cursor:pointer; }
+    button:hover { border-color:#555; }
+    .muted { color:#a8a8a8; font-size: 13px; }
+    .scores { margin:0; padding-left: 18px; }
+    .kbd { padding:2px 6px; border:1px solid #333; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+    .status { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="panel">
+        <div><strong>Snake</strong> — score: <span id="score" class="status">0</span></div>
+        <div class="muted">
+          Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> or <span class="kbd">WASD</span>,
+          pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
+        </div>
+        <div class="muted">
+          Bonus: 25% chance after eating food. Lasts 5–15s. Grants <strong>remaining seconds</strong> points. Doesn’t grow snake.
+        </div>
+      </div>
+
+      <div class="panel" style="min-width: 280px;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="name" maxlength="16" placeholder="Name (for leaderboard)" />
+          <button id="startBtn">Start</button>
+          <button id="muteBtn">Mute</button>
+        </div>
+        <div class="muted" id="netStatus">Connecting…</div>
+      </div>
+    </div>
+
+    <div style="height:12px;"></div>
+
+    <div class="row">
+      <div class="panel">
+        <canvas id="c" width="600" height="600"></canvas>
+        <div class="muted" id="bonusStatus" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <strong>Top 5 (online)</strong>
+          <button id="refreshBtn">Refresh</button>
+        </div>
+        <ol id="scores" class="scores"></ol>
+        <div class="muted">Scores are verified server-side by replaying your run (seed + inputs).</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---------- CONFIG ----------
+  const GRID = 24;                 // 24x24 grid (classic-ish). Canvas scales automatically.
+  const TICK_MS = 110;             // speed (lower = faster)
+  const BONUS_CHANCE = 0.25;       // 25%
+  const BONUS_MIN = 5;             // seconds
+  const BONUS_MAX = 15;            // seconds
+  const API_BASE = "/.netlify/functions"; // change if hosting elsewhere
+  // ---------------------------
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const elScore = document.getElementById("score");
+  const elBonusStatus = document.getElementById("bonusStatus");
+  const elScores = document.getElementById("scores");
+  const elNetStatus = document.getElementById("netStatus");
+  const elName = document.getElementById("name");
+
+  const startBtn = document.getElementById("startBtn");
+  const refreshBtn = document.getElementById("refreshBtn");
+  const muteBtn = document.getElementById("muteBtn");
+
+  // Images (optional; fallback draws shapes)
+  const imgSnake = new Image(); imgSnake.src = "snake.png";
+  const imgFood  = new Image(); imgFood.src  = "food.png";
+  const imgBonus = new Image(); imgBonus.src = "bonus.png";
+  const hasImg = (img) => img && img.complete && img.naturalWidth > 0;
+
+  // Sounds
+  const sEat0 = new Audio("eat0.mp3");
+  const sEat1 = new Audio("eat1.mp3");
+  const sBonus = new Audio("bonus.mp3");
+  const sLose = new Audio("lose.mp3");
+  let muted = false;
+  let eatFlip = 0;
+
+  function play(sound) {
+    if (muted) return;
+    try {
+      sound.currentTime = 0;
+      sound.play();
+    } catch {}
+  }
+
+  muteBtn.onclick = () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? "Unmute" : "Mute";
+  };
+
+  // Deterministic PRNG for run replay verification (Mulberry32)
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function() {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- GAME STATE ----------
+  let running = false;
+  let paused = false;
+
+  let snake = [];        // array of {x,y}, head is [0]
+  let dir = {x:1, y:0};  // current direction
+  let pendingDir = null;
+
+  let food = null;       // {x,y}
+  let bonus = null;      // {x,y, expiresAtMs, totalSec}
+  let score = 0;
+
+  let tickHandle = null;
+  let tickCount = 0;
+
+  // Verification / online leaderboard
+  let session = null; // {sessionId, seed, sig, startedAt}
+  let rng = null;     // PRNG seeded by server seed
+  let inputEvents = []; // {t: tickCount, d: "U/D/L/R"}
+
+  // ---------- HELPERS ----------
+  function cellSize() {
+    return Math.floor(canvas.width / GRID);
+  }
+  function drawCellImage(img, x, y) {
+    const cs = cellSize();
+    const px = x * cs, py = y * cs;
+    ctx.drawImage(img, px, py, cs, cs);
+  }
+  function drawCellRect(x, y) {
+    const cs = cellSize();
+    ctx.fillRect(x * cs, y * cs, cs, cs);
+  }
+
+  function eq(a,b){ return a.x===b.x && a.y===b.y; }
+
+  function inBounds(p) { return p.x >= 0 && p.x < GRID && p.y >= 0 && p.y < GRID; }
+
+  function isOccupied(p) {
+    return snake.some(s => s.x === p.x && s.y === p.y);
+  }
+
+  function randomEmptyCell() {
+    // With RNG to keep deterministic.
+    // Try a few random picks, then fallback scan.
+    for (let i=0;i<200;i++){
+      const x = Math.floor(rng() * GRID);
+      const y = Math.floor(rng() * GRID);
+      const p = {x,y};
+      if (!isOccupied(p) && (!food || !eq(p, food)) && (!bonus || !eq(p, bonus))) return p;
+    }
+    for (let y=0;y<GRID;y++){
+      for (let x=0;x<GRID;x++){
+        const p = {x,y};
+        if (!isOccupied(p) && (!food || !eq(p, food)) && (!bonus || !eq(p, bonus))) return p;
+      }
+    }
+    return null;
+  }
+
+  function setDir(newDir) {
+    // disallow reversing directly
+    if (newDir.x === -dir.x && newDir.y === -dir.y) return;
+    pendingDir = newDir;
+  }
+
+  function dirCodeFromVec(v){
+    if (v.x===0 && v.y===-1) return "U";
+    if (v.x===0 && v.y===1) return "D";
+    if (v.x===-1 && v.y===0) return "L";
+    if (v.x===1 && v.y===0) return "R";
+    return "R";
+  }
+
+  function vecFromDirCode(c){
+    if (c==="U") return {x:0,y:-1};
+    if (c==="D") return {x:0,y:1};
+    if (c==="L") return {x:-1,y:0};
+    if (c==="R") return {x:1,y:0};
+    return {x:1,y:0};
+  }
+
+  function recordInput(code) {
+    // Only record if it actually changes direction (server will replay).
+    inputEvents.push({ t: tickCount, d: code });
+  }
+
+  // ---------- BONUS LOGIC ----------
+  function maybeSpawnBonus() {
+    if (bonus) return; // don't stack
+    const r = rng();
+    if (r >= BONUS_CHANCE) return;
+
+    const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN; // 5..15
+    const pos = randomEmptyCell();
+    if (!pos) return;
+
+    bonus = {
+      x: pos.x,
+      y: pos.y,
+      totalSec: sec,
+      expiresAtMs: performance.now() + sec * 1000,
+    };
+  }
+
+  function bonusRemainingSeconds() {
+    if (!bonus) return 0;
+    const ms = bonus.expiresAtMs - performance.now();
+    return Math.max(0, Math.ceil(ms / 1000));
+  }
+
+  // ---------- RENDER ----------
+  function render() {
+    // Clear
+    ctx.clearRect(0,0,canvas.width, canvas.height);
+
+    const cs = cellSize();
+
+    // grid faint
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = "#2a2a2a";
+    for (let i=1;i<GRID;i++){
+      ctx.beginPath();
+      ctx.moveTo(i*cs,0); ctx.lineTo(i*cs, canvas.height);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0,i*cs); ctx.lineTo(canvas.width, i*cs);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // food
+    if (food) {
+      if (hasImg(imgFood)) drawCellImage(imgFood, food.x, food.y);
+      else {
+        ctx.fillStyle = "#ff6b6b";
+        drawCellRect(food.x, food.y);
+      }
+    }
+
+    // bonus
+    if (bonus) {
+      if (hasImg(imgBonus)) drawCellImage(imgBonus, bonus.x, bonus.y);
+      else {
+        ctx.fillStyle = "#ffd93d";
+        drawCellRect(bonus.x, bonus.y);
+      }
+    }
+
+    // snake
+    for (let i=0;i<snake.length;i++){
+      const s = snake[i];
+      if (hasImg(imgSnake)) drawCellImage(imgSnake, s.x, s.y);
+      else {
+        ctx.fillStyle = i===0 ? "#6ee7b7" : "#34d399";
+        drawCellRect(s.x, s.y);
+      }
+    }
+
+    // bonus UI
+    if (bonus) {
+      const rem = bonusRemainingSeconds();
+      elBonusStatus.textContent = `Bonus active: ${rem}s remaining (worth ${rem} points)`;
+    } else {
+      elBonusStatus.textContent = paused ? "Paused" : (running ? "" : "Press Start");
+    }
+  }
+
+  // ---------- GAME LOOP ----------
+  function resetGame(seed) {
+    rng = mulberry32(seed);
+
+    score = 0;
+    tickCount = 0;
+    inputEvents = [];
+    eatFlip = 0;
+
+    // start snake in middle length 4
+    const mid = Math.floor(GRID/2);
+    snake = [{x:mid, y:mid}, {x:mid-1,y:mid}, {x:mid-2,y:mid}, {x:mid-3,y:mid}];
+    dir = {x:1,y:0};
+    pendingDir = null;
+
+    bonus = null;
+    food = randomEmptyCell();
+
+    elScore.textContent = String(score);
+    render();
+  }
+
+  function lose() {
+    running = false;
+    paused = false;
+    if (tickHandle) clearInterval(tickHandle);
+    tickHandle = null;
+
+    play(sLose);
+    elBonusStatus.textContent = "Game over. Press R to restart.";
+    submitScore().catch(() => {});
+  }
+
+  function step() {
+    if (!running || paused) return;
+
+    tickCount++;
+
+    // apply pending direction at tick boundary
+    if (pendingDir) {
+      dir = pendingDir;
+      pendingDir = null;
+    }
+
+    // move head
+    const head = snake[0];
+    const next = {x: head.x + dir.x, y: head.y + dir.y};
+
+    // wall collision
+    if (!inBounds(next)) return lose();
+
+    // self collision: allow moving into last tail cell if tail is removed this tick (classic)
+    const willEatFood = food && eq(next, food);
+    const willEatBonus = bonus && eq(next, bonus);
+    const tail = snake[snake.length - 1];
+    const hitsBody = snake.some((s, idx) => (s.x===next.x && s.y===next.y) && !(idx===snake.length-1 && !willEatFood));
+    if (hitsBody) return lose();
+
+    // advance
+    snake.unshift(next);
+
+    // expire bonus
+    if (bonus && performance.now() >= bonus.expiresAtMs) {
+      bonus = null;
+    }
+
+    if (willEatFood) {
+      score += 1;
+      elScore.textContent = String(score);
+
+      // eat sound alternating
+      play(eatFlip % 2 === 0 ? sEat0 : sEat1);
+      eatFlip++;
+
+      // spawn new food
+      food = randomEmptyCell();
+
+      // 25% chance to spawn bonus *in addition* to normal point
+      maybeSpawnBonus();
+
+      // snake grows (do NOT pop tail)
+    } else if (willEatBonus) {
+      const rem = bonusRemainingSeconds();
+      score += rem;
+      elScore.textContent = String(score);
+
+      play(sBonus);
+
+      // bonus does NOT grow snake => remove tail
+      snake.pop();
+
+      bonus = null;
+    } else {
+      // normal move (no grow)
+      snake.pop();
+    }
+
+    render();
+  }
+
+  // ---------- INPUT ----------
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+
+    if (k === " "){
+      if (!running) return;
+      paused = !paused;
+      elBonusStatus.textContent = paused ? "Paused" : "";
+      return;
+    }
+    if (k === "r"){
+      if (session?.seed != null) {
+        resetGame(session.seed);
+        running = true;
+        paused = false;
+      }
+      return;
+    }
+
+    const before = dirCodeFromVec(pendingDir || dir);
+
+    if (k === "arrowup" || k === "w") setDir({x:0,y:-1});
+    else if (k === "arrowdown" || k === "s") setDir({x:0,y:1});
+    else if (k === "arrowleft" || k === "a") setDir({x:-1,y:0});
+    else if (k === "arrowright" || k === "d") setDir({x:1,y:0});
+    else return;
+
+    // record only if direction truly changes (and not illegal reverse)
+    const after = dirCodeFromVec(pendingDir || dir);
+    if (after !== before) recordInput(after);
+  });
+
+  // ---------- LEADERBOARD (ONLINE) ----------
+  async function apiGet(path) {
+    const r = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+  async function apiPost(path, body) {
+    const r = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: {"content-type":"application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  function renderTop5(items) {
+    elScores.innerHTML = "";
+    for (const it of items) {
+      const li = document.createElement("li");
+      li.textContent = `${it.name} — ${it.score}`;
+      elScores.appendChild(li);
+    }
+  }
+
+  async function refreshTop5() {
+    try {
+      const data = await apiGet("/top5");
+      renderTop5(data.top5 || []);
+      elNetStatus.textContent = "Online leaderboard loaded.";
+    } catch {
+      elNetStatus.textContent = "Leaderboard offline (backend not set up yet).";
+    }
+  }
+
+  async function newSession() {
+    const name = (elName.value || "").trim().slice(0,16) || "anon";
+    const data = await apiPost("/new", { name });
+    session = data;
+    elNetStatus.textContent = "Session ready.";
+    return data;
+  }
+
+  async function submitScore() {
+    if (!session) return;
+    const name = (elName.value || "").trim().slice(0,16) || "anon";
+
+    // The server computes the real score, we just provide inputs + elapsed ticks.
+    const payload = {
+      name,
+      sessionId: session.sessionId,
+      sig: session.sig,
+      seed: session.seed,
+      tickCount,
+      inputs: inputEvents,
+    };
+
+    try {
+      const res = await apiPost("/submit", payload);
+      if (res.ok) {
+        elNetStatus.textContent = `Submitted. Verified score: ${res.verifiedScore}.`;
+        await refreshTop5();
+      } else {
+        elNetStatus.textContent = `Submit rejected: ${res.reason || "unknown"}`;
+      }
+    } catch {
+      elNetStatus.textContent = "Submit failed (backend not set up yet).";
+    }
+  }
+
+  // ---------- START ----------
+  startBtn.onclick = async () => {
+    try {
+      elNetStatus.textContent = "Creating session…";
+      const s = await newSession();
+      resetGame(s.seed);
+      running = true;
+      paused = false;
+
+      if (tickHandle) clearInterval(tickHandle);
+      tickHandle = setInterval(step, TICK_MS);
+
+      render();
+    } catch (e) {
+      elNetStatus.textContent = "Failed to start session. Is backend deployed?";
+    }
+  };
+
+  refreshBtn.onclick = () => refreshTop5();
+
+  // initial
+  refreshTop5();
+  render();
+})();
+</script>
+</body>
+</html>
