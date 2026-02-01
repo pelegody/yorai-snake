@@ -35,7 +35,7 @@
           pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
         </div>
         <div class="muted">
-          Bonus: 25% chance after eating food. Lasts 5–15s. Grants <strong>remaining seconds</strong> points. Doesn’t grow snake.
+          Bonus: 25% chance after eating food. Lasts 10–20s. Grants <strong>remaining seconds</strong> points. Doesn’t grow snake.
         </div>
       </div>
 
@@ -74,8 +74,8 @@
   const GRID = 24;                 // 24x24 grid (classic-ish). Canvas scales automatically.
   const TICK_MS = 110;             // speed (lower = faster)
   const BONUS_CHANCE = 0.25;       // 25%
-  const BONUS_MIN = 5;             // seconds
-  const BONUS_MAX = 15;            // seconds
+  const BONUS_MIN = 10;             // seconds
+  const BONUS_MAX = 20;            // seconds
   const API_BASE = "/.netlify/functions"; // change if hosting elsewhere
   // ---------------------------
 
@@ -213,32 +213,28 @@
   }
 
   function recordInput(code) {
-    // Only record if it actually changes direction (server will replay).
-    inputEvents.push({ t: tickCount, d: code });
+    inputEvents.push({ t: tickCount + 1, d: code });
   }
 
   // ---------- BONUS LOGIC ----------
   function maybeSpawnBonus() {
-    if (bonus) return; // don't stack
-    const r = rng();
-    if (r >= BONUS_CHANCE) return;
+    if (bonus) return;
+    if (rng() >= BONUS_CHANCE) return;
 
     const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN; // 5..15
     const pos = randomEmptyCell();
     if (!pos) return;
 
-    bonus = {
-      x: pos.x,
-      y: pos.y,
-      totalSec: sec,
-      expiresAtMs: performance.now() + sec * 1000,
-    };
+    const expiresTick = tickCount + Math.ceil((sec * 1000) / TICK_MS);
+
+    bonus = { x: pos.x, y: pos.y, expiresTick, totalSec: sec };
   }
 
   function bonusRemainingSeconds() {
     if (!bonus) return 0;
-    const ms = bonus.expiresAtMs - performance.now();
-    return Math.max(0, Math.ceil(ms / 1000));
+    const ticksLeft = bonus.expiresTick - tickCount;
+    if (ticksLeft <= 0) return 0;
+    return Math.ceil((ticksLeft * TICK_MS) / 1000);
   }
 
   // ---------- RENDER ----------
@@ -361,9 +357,7 @@
     snake.unshift(next);
 
     // expire bonus
-    if (bonus && performance.now() >= bonus.expiresAtMs) {
-      bonus = null;
-    }
+    if (bonus && tickCount >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
       score += 1;
@@ -461,8 +455,8 @@
       const data = await apiGet("/top5");
       renderTop5(data.top5 || []);
       elNetStatus.textContent = "Online leaderboard loaded.";
-    } catch {
-      elNetStatus.textContent = "Leaderboard offline (backend not set up yet).";
+    } catch (e) {
+      elNetStatus.textContent = "Leaderboard failed: " + (e?.message || "unknown");
     }
   }
 
@@ -496,8 +490,8 @@
       } else {
         elNetStatus.textContent = `Submit rejected: ${res.reason || "unknown"}`;
       }
-    } catch {
-      elNetStatus.textContent = "Submit failed (backend not set up yet).";
+    } catch (e) {
+      elNetStatus.textContent = "Submit failed: " + (e?.message || "unknown");
     }
   }
 

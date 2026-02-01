@@ -3,8 +3,9 @@ import crypto from "crypto";
 // Must match frontend config exactly
 const GRID = 24;
 const BONUS_CHANCE = 0.25;
-const BONUS_MIN = 5;
-const BONUS_MAX = 15;
+const BONUS_MIN = 10;
+const BONUS_MAX = 20;
+const TICK_MS = 110; // MUST match client
 
 // Deterministic PRNG (Mulberry32), identical to client
 function mulberry32(seed) {
@@ -64,13 +65,11 @@ async function redisSet(key, value) {
 function replay({ seed, tickCount, inputs }) {
   const rng = mulberry32(seed >>> 0);
 
-  // initial snake
   const mid = Math.floor(GRID/2);
   let snake = [{x:mid,y:mid}, {x:mid-1,y:mid}, {x:mid-2,y:mid}, {x:mid-3,y:mid}];
   let dir = {x:1,y:0};
   let food = null;
-  let bonus = null; // {x,y, remainingSec}
-
+  let bonus = null; // {x,y, expiresTick, totalSec}
   let score = 0;
 
   function isOccupied(p){ return snake.some(s => s.x===p.x && s.y===p.y); }
@@ -80,25 +79,27 @@ function replay({ seed, tickCount, inputs }) {
       const x = Math.floor(rng() * GRID);
       const y = Math.floor(rng() * GRID);
       const p = {x,y};
-      if (!isOccupied(p) && (!food || !eq(p,food)) && (!bonus || !eq(p,bonus))) return p;
+      if (!isOccupied(p) && (!food || !eq(p,food)) && (!bonus || (p.x!==bonus.x || p.y!==bonus.y))) return p;
     }
     for (let y=0;y<GRID;y++){
       for (let x=0;x<GRID;x++){
         const p={x,y};
-        if (!isOccupied(p) && (!food || !eq(p,food)) && (!bonus || !eq(p,bonus))) return p;
+        if (!isOccupied(p) && (!food || !eq(p,food)) && (!bonus || (p.x!==bonus.x || p.y!==bonus.y))) return p;
       }
     }
     return null;
   }
 
-  function maybeSpawnBonus() {
+  function maybeSpawnBonus(currentTick) {
     if (bonus) return;
     if (rng() >= BONUS_CHANCE) return;
 
-    const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN;
+    const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN; // MUST match client
     const pos = randomEmptyCell();
     if (!pos) return;
-    bonus = { x: pos.x, y: pos.y, remainingSec: sec };
+
+    const expiresTick = currentTick + Math.ceil((sec * 1000) / TICK_MS);
+    bonus = { x: pos.x, y: pos.y, expiresTick, totalSec: sec };
   }
 
   // start food
@@ -111,55 +112,46 @@ function replay({ seed, tickCount, inputs }) {
     const t = clampInt(it?.t, 0, tickCount);
     const d = String(it?.d || "");
     if (!["U","D","L","R"].includes(d)) continue;
-    // keep last direction change in a tick
-    byTick.set(t, d);
+    byTick.set(t, d); // last wins
   }
 
   for (let tick=1; tick<=tickCount; tick++) {
-    // apply direction change at tick boundary
+    // apply direction at tick boundary
     const code = byTick.get(tick);
     if (code) {
       const nd = vecFromDirCode(code);
-      // disallow reverse
       if (!(nd.x === -dir.x && nd.y === -dir.y)) dir = nd;
     }
 
-    // move head
     const head = snake[0];
     const next = {x: head.x + dir.x, y: head.y + dir.y};
-
     if (!inBounds(next)) return { ok:false, reason:"wall" };
 
     const willEatFood = food && eq(next, food);
-    const willEatBonus = bonus && eq(next, bonus);
-    const tail = snake[snake.length - 1];
+    const willEatBonus = bonus && next.x===bonus.x && next.y===bonus.y;
 
-    // self collision (allow into tail if not growing)
-    const hits = snake.some((s, idx) => (s.x===next.x && s.y===next.y) && !(idx===snake.length-1 && !willEatFood));
+    // self collision (allow into tail if NOT growing)
+    const hits = snake.some((s, idx) =>
+      (s.x===next.x && s.y===next.y) && !(idx===snake.length-1 && !willEatFood)
+    );
     if (hits) return { ok:false, reason:"self" };
 
-    // advance
     snake.unshift(next);
 
-    // bonus countdown per tick: TICK_MS is 110ms client-side, but we avoid wall-clock here.
-    // Instead, define bonus lifetime in ticks by approximating 1 second = 9 ticks (110ms).
-    // To match client exactly, you'd pass TICK_MS and compute ticks-per-second precisely.
-    // We'll use a deterministic mapping:
-    const TICKS_PER_SEC = 9;
-    if (bonus) {
-      // decrement once every 9 ticks
-      if (tick % TICKS_PER_SEC === 0) bonus.remainingSec = Math.max(0, bonus.remainingSec - 1);
-      if (bonus.remainingSec <= 0) bonus = null;
-    }
+    // expire bonus (tick-based, same as client)
+    if (bonus && tick >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
       score += 1;
       food = randomEmptyCell();
-      maybeSpawnBonus();
-      // grow: do not pop
+      maybeSpawnBonus(tick); // ✅ FIXED: pass tick
+      // grow: no pop
     } else if (willEatBonus) {
-      score += bonus.remainingSec; // remaining seconds points
-      snake.pop();                 // no grow
+      const ticksLeft = bonus.expiresTick - tick;
+      const remSec = Math.max(0, Math.ceil((ticksLeft * TICK_MS) / 1000));
+      score += remSec;
+
+      snake.pop();  // no-grow
       bonus = null;
     } else {
       snake.pop();
@@ -218,6 +210,10 @@ export async function handler(event) {
     };
 
   } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ ok:false, reason:"bad request" }) };
+    return {
+      statusCode: 500,
+      headers: { "content-type":"application/json", "cache-control":"no-store" },
+      body: JSON.stringify({ ok:false, reason: e?.message || "server error" }),
+    };
   }
 }
