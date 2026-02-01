@@ -37,12 +37,8 @@ function vecFromDirCode(c) {
   return { x: 1, y: 0 };
 }
 
-function eq(a, b) {
-  return a.x === b.x && a.y === b.y;
-}
-function inBounds(p) {
-  return p.x >= 0 && p.x < GRID && p.y >= 0 && p.y < GRID;
-}
+function eq(a, b) { return a.x === b.x && a.y === b.y; }
+function inBounds(p) { return p.x >= 0 && p.x < GRID && p.y >= 0 && p.y < GRID; }
 
 async function redisGet(key) {
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -62,16 +58,14 @@ async function redisSet(key, value) {
   if (!url || !token) throw new Error("Missing Upstash env");
 
   const r = await fetch(
-    `${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(
-      JSON.stringify(value)
-    )}`,
+    `${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(JSON.stringify(value))}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!r.ok) throw new Error("Redis set failed");
 }
 
 // Replay the whole run server-side and compute score.
-// IMPORTANT: wall/self are NORMAL game over conditions, so replay should stop and return score.
+// IMPORTANT: wall/self are normal game-over, so stop replay and return score-so-far.
 function replay({ seed, tickCount, inputs }) {
   const rng = mulberry32(seed >>> 0);
 
@@ -100,8 +94,7 @@ function replay({ seed, tickCount, inputs }) {
         !isOccupied(p) &&
         (!food || !eq(p, food)) &&
         (!bonus || (p.x !== bonus.x || p.y !== bonus.y))
-      )
-        return p;
+      ) return p;
     }
     for (let y = 0; y < GRID; y++) {
       for (let x = 0; x < GRID; x++) {
@@ -110,8 +103,7 @@ function replay({ seed, tickCount, inputs }) {
           !isOccupied(p) &&
           (!food || !eq(p, food)) &&
           (!bonus || (p.x !== bonus.x || p.y !== bonus.y))
-        )
-          return p;
+        ) return p;
       }
     }
     return null;
@@ -121,8 +113,7 @@ function replay({ seed, tickCount, inputs }) {
     if (bonus) return;
     if (rng() >= BONUS_CHANCE) return;
 
-    const sec =
-      Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN;
+    const sec = Math.floor(rng() * (BONUS_MAX - BONUS_MIN + 1)) + BONUS_MIN;
     const pos = randomEmptyCell();
     if (!pos) return;
 
@@ -155,37 +146,43 @@ function replay({ seed, tickCount, inputs }) {
     const head = snake[0];
     const next = { x: head.x + dir.x, y: head.y + dir.y };
 
-    // NORMAL game over: stop replay and return score so far
+    // NORMAL game over: stop
     if (!inBounds(next)) break;
 
     const willEatFood = food && eq(next, food);
     const willEatBonus = bonus && next.x === bonus.x && next.y === bonus.y;
 
-    // self collision (match client):
-    // client allows moving into tail only if NOT growing (not eating food AND not eating bonus)
-    const hits = snake.some((s, idx) => {
-      if (s.x !== next.x || s.y !== next.y) return false;
-      const isTail = idx === snake.length - 1;
-      const notGrowing = !willEatFood && !willEatBonus;
-      return !(isTail && notGrowing);
-    });
+    // self collision (MATCH CLIENT EXACTLY):
+    // allow stepping into tail if NOT growing (client checks only !willEatFood)
+    const hits = snake.some(
+      (s, idx) =>
+        s.x === next.x &&
+        s.y === next.y &&
+        !(idx === snake.length - 1 && !willEatFood)
+    );
 
-    // NORMAL game over: stop replay and return score so far
+    // NORMAL game over: stop
     if (hits) break;
 
     snake.unshift(next);
 
     // expire bonus (tick-based, same as client)
+    const bonusExpiresTick = bonus ? bonus.expiresTick : null;
     if (bonus && tick >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
       score += 1;
       food = randomEmptyCell();
-      maybeSpawnBonus(tick); // tick is required
+      maybeSpawnBonus(tick);
       // grow: do not pop
     } else if (willEatBonus) {
-      const ticksLeft = bonus.expiresTick - tick;
-      const remSec = Math.max(0, Math.ceil((ticksLeft * TICK_MS) / 1000));
+      // In the client, if bonus expired exactly now, bonusRemainingSeconds() becomes 0.
+      // Replicate that safely:
+      let remSec = 0;
+      if (bonusExpiresTick != null) {
+        const ticksLeft = bonusExpiresTick - tick;
+        remSec = Math.max(0, Math.ceil((ticksLeft * TICK_MS) / 1000));
+      }
       score += remSec;
 
       snake.pop(); // no-grow
@@ -220,10 +217,7 @@ export async function handler(event) {
     if (!secret) {
       return {
         statusCode: 500,
-        headers: {
-          "content-type": "application/json",
-          "cache-control": "no-store",
-        },
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ ok: false, reason: "Missing SESSION_HMAC_SECRET" }),
       };
     }
@@ -233,10 +227,7 @@ export async function handler(event) {
     if (!sessionId || !sig || sig !== expected) {
       return {
         statusCode: 200,
-        headers: {
-          "content-type": "application/json",
-          "cache-control": "no-store",
-        },
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ ok: false, reason: "bad session" }),
       };
     }
@@ -244,10 +235,7 @@ export async function handler(event) {
     if (tickCount > 60000) {
       return {
         statusCode: 200,
-        headers: {
-          "content-type": "application/json",
-          "cache-control": "no-store",
-        },
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ ok: false, reason: "run too long" }),
       };
     }
@@ -256,10 +244,7 @@ export async function handler(event) {
     if (!rep.ok) {
       return {
         statusCode: 200,
-        headers: {
-          "content-type": "application/json",
-          "cache-control": "no-store",
-        },
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ ok: false, reason: `replay failed (${rep.reason})` }),
       };
     }
