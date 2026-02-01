@@ -105,7 +105,7 @@
           <div class="score-pill">Score <strong id="score">0</strong></div>
         </div>
         <div class="muted">
-          Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> or <span class="kbd">WASD</span>,
+          Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span>,
           pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
         </div>
         <div class="muted">
@@ -515,10 +515,10 @@
 
     const before = dirCodeFromVec(pendingDir || dir);
 
-    if (k === "arrowup" || k === "w") { e.preventDefault(); setDir({x:0,y:-1}); }
-    else if (k === "arrowdown" || k === "s") { e.preventDefault(); setDir({x:0,y:1}); }
-    else if (k === "arrowleft" || k === "a") { e.preventDefault(); setDir({x:-1,y:0}); }
-    else if (k === "arrowright" || k === "d") { e.preventDefault(); setDir({x:1,y:0}); }
+    if (k === "arrowup") { e.preventDefault(); setDir({x:0,y:-1}); }
+    else if (k === "arrowdown") { e.preventDefault(); setDir({x:0,y:1}); }
+    else if (k === "arrowleft") { e.preventDefault(); setDir({x:-1,y:0}); }
+    else if (k === "arrowright") { e.preventDefault(); setDir({x:1,y:0}); }
     else return;
 
     const after = dirCodeFromVec(pendingDir || dir);
