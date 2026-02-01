@@ -8,28 +8,36 @@
     :root { color-scheme: dark; }
     body { margin:0; background:#0b0b0b; color:#eaeaea; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
 
-    /* Bigger overall page */
-    .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+    /* Wider overall page */
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 14px; }
 
-    .topbar { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-    .panel { background:#121212; border:1px solid #2a2a2a; border-radius:12px; padding:12px; }
+    .topbar { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .panel { background:#121212; border:1px solid #2a2a2a; border-radius:12px; padding:10px; }
 
-    /* Canvas scales to container width; keep it crisp */
-    canvas {
-      background:#050505; border:1px solid #2a2a2a; border-radius:12px;
-      display:block; width:100%; height:auto; image-rendering: pixelated;
-    }
-
-    /* Game big, leaderboard small */
+    /* Layout: game big, leaderboard small */
     .row {
       display: grid;
-      grid-template-columns: 3fr 1fr;   /* 75% game, 25% leaderboard */
-      gap: 12px;
+      grid-template-columns: 3fr 1fr;
+      gap: 10px;
       align-items: start;
     }
+    @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
 
-    @media (max-width: 900px) {
-      .row { grid-template-columns: 1fr; }
+    /* Keep canvas fitting the viewport height */
+    .game-panel { padding: 10px; }
+    canvas {
+      background:#050505;
+      border:1px solid #2a2a2a;
+      border-radius:12px;
+      display:block;
+
+      /* key: never overflow vertically */
+      width: 100%;
+      height: auto;
+      max-height: calc(100vh - 210px); /* topbar + padding */
+      aspect-ratio: 1 / 1;
+
+      image-rendering: pixelated;
     }
 
     input, button {
@@ -43,15 +51,59 @@
     .kbd { padding:2px 6px; border:1px solid #333; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
     .status { font-variant-numeric: tabular-nums; }
 
-    /* Make the leaderboard panel feel smaller */
-    .panel.leaderboard { padding: 10px; max-height: 420px; overflow: auto; }
+    .panel.leaderboard { padding: 10px; max-height: 380px; overflow: auto; }
+
+    /* Score always visible + final score overlay */
+    .score-pill {
+      display:inline-flex;
+      align-items:baseline;
+      gap:8px;
+      padding:6px 10px;
+      border:1px solid #2a2a2a;
+      border-radius:999px;
+      background: rgba(0,0,0,0.25);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .score-pill strong { font-size: 20px; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.72);
+      z-index: 999;
+      padding: 16px;
+    }
+    .overlay.show { display: flex; }
+    .overlay-card {
+      width: min(520px, 100%);
+      background: #121212;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 16px;
+      text-align: center;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    }
+    .final-score {
+      font-size: 44px;
+      font-weight: 800;
+      margin: 10px 0 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .overlay-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top: 12px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="topbar">
       <div class="panel">
-        <div><strong>Snake</strong> — score: <span id="score" class="status">0</span></div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div><strong>Snake</strong></div>
+          <div class="score-pill">Score <strong id="score">0</strong></div>
+        </div>
         <div class="muted">
           Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> or <span class="kbd">WASD</span>,
           pause <span class="kbd">Space</span>, restart <span class="kbd">R</span>
@@ -71,12 +123,12 @@
       </div>
     </div>
 
-    <div style="height:12px;"></div>
+    <div style="height:10px;"></div>
 
     <div class="row">
-      <div class="panel">
-        <!-- Bigger internal resolution for a larger, crisp grid -->
-        <canvas id="c" width="960" height="960"></canvas>
+      <div class="panel game-panel">
+        <!-- Keep internal resolution moderate; CSS handles fitting -->
+        <canvas id="c" width="720" height="720"></canvas>
         <div class="muted" id="bonusStatus" style="margin-top:8px;"></div>
       </div>
 
@@ -87,6 +139,19 @@
         </div>
         <ol id="scores" class="scores"></ol>
         <div class="muted">Scores are verified server-side by replaying your run (seed + inputs).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Over overlay -->
+  <div id="overlay" class="overlay" role="dialog" aria-modal="true" aria-label="Game over">
+    <div class="overlay-card">
+      <div class="muted">Game over</div>
+      <div class="final-score" id="finalScore">0</div>
+      <div class="muted" id="finalNote">Submitting score…</div>
+      <div class="overlay-actions">
+        <button id="playAgainBtn">Play again</button>
+        <button id="closeOverlayBtn">Close</button>
       </div>
     </div>
   </div>
@@ -115,7 +180,13 @@
   const refreshBtn = document.getElementById("refreshBtn");
   const muteBtn = document.getElementById("muteBtn");
 
-  // Images (optional; fallback draws shapes)
+  const overlay = document.getElementById("overlay");
+  const finalScoreEl = document.getElementById("finalScore");
+  const finalNoteEl = document.getElementById("finalNote");
+  const playAgainBtn = document.getElementById("playAgainBtn");
+  const closeOverlayBtn = document.getElementById("closeOverlayBtn");
+
+  // Images
   const imgSnake = new Image(); imgSnake.src = "snake.png";
   const imgFood  = new Image(); imgFood.src  = "food.png";
   const imgBonus = new Image(); imgBonus.src = "bonus.png";
@@ -139,7 +210,7 @@
     muteBtn.textContent = muted ? "Unmute" : "Mute";
   };
 
-  // Deterministic PRNG (Mulberry32)
+  // PRNG
   function mulberry32(seed) {
     let a = seed >>> 0;
     return function() {
@@ -159,21 +230,18 @@
   let pendingDir = null;
 
   let food = null;
-  let bonus = null;      // {x,y, expiresTick, totalSec}
+  let bonus = null; // {x,y, expiresTick, totalSec}
   let score = 0;
 
   let tickHandle = null;
   let tickCount = 0;
 
-  // Verification / online leaderboard
-  let session = null; // {sessionId, seed, sig}
+  let session = null;
   let rng = null;
-  let inputEvents = []; // {t, d}
+  let inputEvents = [];
 
   // ---------- HELPERS ----------
-  function cellSize() {
-    return Math.floor(canvas.width / GRID);
-  }
+  function cellSize() { return Math.floor(canvas.width / GRID); }
   function drawCellImage(img, x, y) {
     const cs = cellSize();
     ctx.drawImage(img, x * cs, y * cs, cs, cs);
@@ -182,10 +250,9 @@
     const cs = cellSize();
     ctx.fillRect(x * cs, y * cs, cs, cs);
   }
-
   function eq(a,b){ return a.x===b.x && a.y===b.y; }
-  function inBounds(p) { return p.x >= 0 && p.x < GRID && p.y >= 0 && p.y < GRID; }
-  function isOccupied(p) { return snake.some(s => s.x === p.x && s.y === p.y); }
+  function inBounds(p) { return p.x>=0 && p.x<GRID && p.y>=0 && p.y<GRID; }
+  function isOccupied(p){ return snake.some(s => s.x===p.x && s.y===p.y); }
 
   function randomEmptyCell() {
     for (let i=0;i<200;i++){
@@ -217,8 +284,7 @@
   }
 
   function recordInput(code) {
-    // applied at start of NEXT tick
-    inputEvents.push({ t: tickCount + 1, d: code });
+    inputEvents.push({ t: tickCount + 1, d: code }); // applied next tick
   }
 
   // ---------- BONUS ----------
@@ -240,6 +306,34 @@
     if (ticksLeft <= 0) return 0;
     return Math.ceil((ticksLeft * TICK_MS) / 1000);
   }
+
+  function setScore(newScore) {
+    score = newScore;
+    elScore.textContent = String(score); // always visible
+  }
+
+  // ---------- OVERLAY ----------
+  function showGameOverOverlay() {
+    finalScoreEl.textContent = String(score);
+    finalNoteEl.textContent = "Submitting score…";
+    overlay.classList.add("show");
+  }
+  function hideOverlay() {
+    overlay.classList.remove("show");
+  }
+
+  playAgainBtn.onclick = () => {
+    hideOverlay();
+    if (session?.seed != null) {
+      resetGame(session.seed);
+      running = true;
+      paused = false;
+      if (tickHandle) clearInterval(tickHandle);
+      tickHandle = setInterval(step, TICK_MS);
+    }
+  };
+  closeOverlayBtn.onclick = hideOverlay;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) hideOverlay(); });
 
   // ---------- RENDER ----------
   function render() {
@@ -275,20 +369,7 @@
       else { ctx.fillStyle = i===0 ? "#6ee7b7" : "#34d399"; drawCellRect(s.x, s.y); }
     }
 
-    // On-canvas HUD
-    ctx.save();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = "white";
-    ctx.font = "bold 22px system-ui";
-    ctx.fillText(`Score: ${score}`, 14, 30);
-    if (bonus) {
-      const rem = bonusRemainingSeconds();
-      ctx.font = "14px system-ui";
-      ctx.fillText(`Bonus: ${rem}s (${rem} pts)`, 14, 52);
-    }
-    ctx.restore();
-
-    // text status under canvas
+    // status under canvas
     if (bonus) {
       const rem = bonusRemainingSeconds();
       elBonusStatus.textContent = `Bonus active: ${rem}s remaining (worth ${rem} points)`;
@@ -301,7 +382,7 @@
   function resetGame(seed) {
     rng = mulberry32(seed);
 
-    score = 0;
+    setScore(0);
     tickCount = 0;
     inputEvents = [];
     eatFlip = 0;
@@ -314,7 +395,6 @@
     bonus = null;
     food = randomEmptyCell();
 
-    elScore.textContent = String(score);
     render();
   }
 
@@ -326,7 +406,17 @@
 
     play(sLose);
     elBonusStatus.textContent = "Game over. Press R to restart.";
-    submitScore().catch(() => {});
+
+    showGameOverOverlay();
+
+    submitScore()
+      .then((verified) => {
+        if (verified != null) finalNoteEl.textContent = `Verified score: ${verified}`;
+        else finalNoteEl.textContent = "Submitted.";
+      })
+      .catch((e) => {
+        finalNoteEl.textContent = "Submit failed: " + (e?.message || "unknown");
+      });
   }
 
   function step() {
@@ -354,22 +444,20 @@
     if (bonus && tickCount >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
-      score += 1;
-      elScore.textContent = String(score);
+      setScore(score + 1);
 
       play(eatFlip % 2 === 0 ? sEat0 : sEat1);
       eatFlip++;
 
       food = randomEmptyCell();
-      maybeSpawnBonus(); // 25%
+      maybeSpawnBonus();
     } else if (willEatBonus) {
       const rem = bonusRemainingSeconds();
-      score += rem;
-      elScore.textContent = String(score);
+      setScore(score + rem);
 
       play(sBonus);
 
-      snake.pop(); // no-grow
+      snake.pop();
       bonus = null;
     } else {
       snake.pop();
@@ -390,9 +478,12 @@
     }
     if (k === "r"){
       if (session?.seed != null) {
+        hideOverlay();
         resetGame(session.seed);
         running = true;
         paused = false;
+        if (tickHandle) clearInterval(tickHandle);
+        tickHandle = setInterval(step, TICK_MS);
       }
       return;
     }
@@ -453,7 +544,7 @@
   }
 
   async function submitScore() {
-    if (!session) return;
+    if (!session) return null;
     const name = (elName.value || "").trim().slice(0,16) || "anon";
 
     const payload = {
@@ -465,16 +556,14 @@
       inputs: inputEvents,
     };
 
-    try {
-      const res = await apiPost("/submit", payload);
-      if (res.ok) {
-        elNetStatus.textContent = `Submitted. Verified score: ${res.verifiedScore}.`;
-        await refreshTop5();
-      } else {
-        elNetStatus.textContent = `Submit rejected: ${res.reason || "unknown"}`;
-      }
-    } catch (e) {
-      elNetStatus.textContent = "Submit failed: " + (e?.message || "unknown");
+    const res = await apiPost("/submit", payload);
+    if (res.ok) {
+      elNetStatus.textContent = `Submitted. Verified score: ${res.verifiedScore}.`;
+      await refreshTop5();
+      return res.verifiedScore;
+    } else {
+      elNetStatus.textContent = `Submit rejected: ${res.reason || "unknown"}`;
+      return null;
     }
   }
 
@@ -483,6 +572,7 @@
     try {
       elNetStatus.textContent = "Creating session…";
       const s = await newSession();
+      hideOverlay();
       resetGame(s.seed);
       running = true;
       paused = false;
