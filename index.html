@@ -94,6 +94,9 @@
       font-variant-numeric: tabular-nums;
     }
     .overlay-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top: 12px; }
+
+    /* We use center name overlay instead of the topbar input */
+    #name { display:none; }
   </style>
 </head>
 <body>
@@ -138,7 +141,6 @@
           <button id="refreshBtn">Refresh</button>
         </div>
         <ol id="scores" class="scores"></ol>
-        <div class="muted">Scores are verified server-side by replaying your run (seed + inputs).</div>
       </div>
     </div>
   </div>
@@ -152,6 +154,19 @@
       <div class="overlay-actions">
         <button id="playAgainBtn">Play again</button>
         <button id="closeOverlayBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Name prompt overlay (shown on first visit) -->
+  <div id="nameOverlay" class="overlay" role="dialog" aria-modal="true" aria-label="Enter your name">
+    <div class="overlay-card">
+      <div style="font-weight:800;font-size:18px;">Enter your name</div>
+      <div class="muted" style="margin-top:6px;">Used for the leaderboard</div>
+
+      <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+        <input id="namePromptInput" maxlength="16" placeholder="Name (max 16)" style="min-width:260px;">
+        <button id="namePromptBtn">Continue</button>
       </div>
     </div>
   </div>
@@ -174,7 +189,7 @@
   const elBonusStatus = document.getElementById("bonusStatus");
   const elScores = document.getElementById("scores");
   const elNetStatus = document.getElementById("netStatus");
-  const elName = document.getElementById("name");
+  const elName = document.getElementById("name"); // hidden, kept for compatibility
 
   const startBtn = document.getElementById("startBtn");
   const refreshBtn = document.getElementById("refreshBtn");
@@ -185,6 +200,46 @@
   const finalNoteEl = document.getElementById("finalNote");
   const playAgainBtn = document.getElementById("playAgainBtn");
   const closeOverlayBtn = document.getElementById("closeOverlayBtn");
+
+  // Name overlay elements
+  const nameOverlay = document.getElementById("nameOverlay");
+  const namePromptInput = document.getElementById("namePromptInput");
+  const namePromptBtn = document.getElementById("namePromptBtn");
+
+  // ---------- NAME (persist once) ----------
+  const NAME_KEY = "snake:name";
+
+  function sanitizeName(n) {
+    return String(n || "").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 16);
+  }
+  function getSavedName() {
+    return sanitizeName(localStorage.getItem(NAME_KEY) || "");
+  }
+  function setSavedName(n) {
+    const name = sanitizeName(n) || "anon";
+    localStorage.setItem(NAME_KEY, name);
+    // (Optional) keep the hidden input in sync, in case anything reads it
+    elName.value = name;
+    return name;
+  }
+  function showNamePrompt() {
+    nameOverlay.classList.add("show");
+    namePromptInput.value = getSavedName();
+    setTimeout(() => namePromptInput.focus(), 0);
+  }
+  function hideNamePrompt() {
+    nameOverlay.classList.remove("show");
+  }
+
+  namePromptBtn.onclick = () => {
+    const saved = setSavedName(namePromptInput.value);
+    hideNamePrompt();
+    elNetStatus.textContent = `Ready as "${saved}". Press Start.`;
+  };
+  namePromptInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") namePromptBtn.click();
+  });
+  nameOverlay.addEventListener("click", (e) => { if (e.target === nameOverlay) namePromptBtn.click(); });
 
   // Images
   const imgSnake = new Image(); imgSnake.src = "snake.png";
@@ -561,7 +616,10 @@
   }
 
   async function newSession() {
-    const name = (elName.value || "").trim().slice(0,16) || "anon";
+    const name = getSavedName() || "anon";
+    // keep hidden input aligned (in case you ever re-show it)
+    elName.value = name;
+
     const data = await apiPost("/new", { name });
     session = data;
     session.name = name;
@@ -571,10 +629,9 @@
 
   async function submitScore() {
     if (!session) return null;
-    const name = (session?.name || (elName.value || "")).trim().slice(0,16) || "anon";
 
     const payload = {
-      name,
+      name: session.name,
       sessionId: session.sessionId,
       sig: session.sig,
       seed: session.seed,
@@ -596,6 +653,13 @@
   // ---------- START ----------
   startBtn.onclick = async () => {
     try {
+      // Require name once before allowing play
+      if (!getSavedName()) {
+        showNamePrompt();
+        elNetStatus.textContent = "Enter a name to continue.";
+        return;
+      }
+
       elNetStatus.textContent = "Creating session…";
       const s = await newSession();
       hideOverlay();
@@ -613,6 +677,16 @@
   };
 
   refreshBtn.onclick = () => refreshTop5();
+
+  // ---------- INIT ----------
+  const savedName = getSavedName();
+  if (savedName) {
+    elNetStatus.textContent = `Ready as "${savedName}". Press Start.`;
+    elName.value = savedName;
+  } else {
+    elNetStatus.textContent = "Enter your name to start.";
+    showNamePrompt();
+  }
 
   refreshTop5();
   render();
