@@ -322,14 +322,29 @@
     overlay.classList.remove("show");
   }
 
+  function startTicking() {
+    if (tickHandle) clearInterval(tickHandle);
+
+    tickHandle = setInterval(() => {
+      try {
+        step();
+      } catch (e) {
+        console.error("step crashed:", e);
+        running = false;
+        paused = false;
+        if (tickHandle) clearInterval(tickHandle);
+        tickHandle = null;
+      }
+    }, TICK_MS);
+  }
+
   playAgainBtn.onclick = () => {
     hideOverlay();
     if (session?.seed != null) {
       resetGame(session.seed);
       running = true;
       paused = false;
-      if (tickHandle) clearInterval(tickHandle);
-      tickHandle = setInterval(step, TICK_MS);
+      startTicking();
     }
   };
   closeOverlayBtn.onclick = hideOverlay;
@@ -476,24 +491,34 @@
       elBonusStatus.textContent = paused ? "Paused" : "";
       return;
     }
-    if (k === "r"){
-      if (session?.seed != null) {
-        hideOverlay();
-        resetGame(session.seed);
-        running = true;
-        paused = false;
-        if (tickHandle) clearInterval(tickHandle);
-        tickHandle = setInterval(step, TICK_MS);
+    if (k === "r") {
+      e.preventDefault();
+
+      // Remove focus from inputs / overlay buttons
+      if (document.activeElement && document.activeElement.blur) {
+        document.activeElement.blur();
       }
+
+      // If no session yet, behave like Start
+      if (session?.seed == null) {
+        startBtn.click();
+        return;
+      }
+
+      hideOverlay();
+      resetGame(session.seed);
+      running = true;
+      paused = false;
+      startTicking();
       return;
     }
 
     const before = dirCodeFromVec(pendingDir || dir);
 
-    if (k === "arrowup" || k === "w") setDir({x:0,y:-1});
-    else if (k === "arrowdown" || k === "s") setDir({x:0,y:1});
-    else if (k === "arrowleft" || k === "a") setDir({x:-1,y:0});
-    else if (k === "arrowright" || k === "d") setDir({x:1,y:0});
+    if (k === "arrowup" || k === "w") { e.preventDefault(); setDir({x:0,y:-1}); }
+    else if (k === "arrowdown" || k === "s") { e.preventDefault(); setDir({x:0,y:1}); }
+    else if (k === "arrowleft" || k === "a") { e.preventDefault(); setDir({x:-1,y:0}); }
+    else if (k === "arrowright" || k === "d") { e.preventDefault(); setDir({x:1,y:0}); }
     else return;
 
     const after = dirCodeFromVec(pendingDir || dir);
