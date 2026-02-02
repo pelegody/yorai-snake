@@ -179,6 +179,7 @@
   const BONUS_CHANCE = 0.25;
   const BONUS_MIN = 10;
   const BONUS_MAX = 20;
+  const FOOD_SCORE = 3;
   const API_BASE = "/.netlify/functions";
   // ---------------------------
 
@@ -530,7 +531,7 @@
     if (bonus && tickCount >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
-      setScore(score + 1);
+      setScore(score + FOOD_SCORE);
 
       play(eatFlip % 2 === 0 ? sEat0 : sEat1);
       eatFlip++;

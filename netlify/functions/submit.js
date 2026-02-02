@@ -5,6 +5,7 @@ const GRID = 24;
 const BONUS_CHANCE = 0.25;
 const BONUS_MIN = 10;
 const BONUS_MAX = 20;
+const FOOD_SCORE = 3;
 const TICK_MS = 110; // MUST match client
 
 // Deterministic PRNG (Mulberry32), identical to client
@@ -171,7 +172,7 @@ function replay({ seed, tickCount, inputs }) {
     if (bonus && tick >= bonus.expiresTick) bonus = null;
 
     if (willEatFood) {
-      score += 1;
+      score += FOOD_SCORE;
       food = randomEmptyCell();
       maybeSpawnBonus(tick);
       // grow: do not pop
