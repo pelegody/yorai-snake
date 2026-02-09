@@ -97,6 +97,35 @@
 
     /* We use center name overlay instead of the topbar input */
     #name { display:none; }
+    /* Character picker */
+    .char-grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap:12px;
+      margin-top:12px;
+    }
+    @media (max-width: 520px){ .char-grid{ grid-template-columns: 1fr; } }
+    .char-card{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      padding:10px;
+      border:1px solid #2a2a2a;
+      border-radius:14px;
+      background:#0f0f0f;
+      cursor:pointer;
+      user-select:none;
+      text-align:left;
+    }
+    .char-card:hover{ border-color:#555; }
+    .char-thumb{
+      width:64px; height:64px;
+      border-radius:12px;
+      background:#050505;
+      border:1px solid #2a2a2a;
+      object-fit:contain;
+      image-rendering: pixelated;
+    }
   </style>
 </head>
 <body>
@@ -171,6 +200,18 @@
     </div>
   </div>
 
+  <!-- Character select overlay (shown after name; prefilled with last value) -->
+  <div id="charOverlay" class="overlay" role="dialog" aria-modal="true" aria-label="Select character">
+    <div class="overlay-card">
+      <div style="font-weight:800;font-size:18px;">Select your character</div>
+      <div id="charGrid" class="char-grid"></div>
+      <div class="muted" id="charNote" style="margin-top:10px;"></div>
+      <div class="overlay-actions" style="margin-top:12px;">
+        <button id="charBackBtn">Back</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 (() => {
   // ---------- CONFIG ----------
@@ -182,6 +223,14 @@
   const FOOD_SCORE = 3;
   const API_BASE = "/.netlify/functions";
   // ---------------------------
+
+  // Characters: each folder contains:
+  // bonus.mp3 eat0.mp3 eat1.mp3 lose.mp3 bonus.png food.png (or foog.png) snake.png
+  // Add/remove folders here:
+  const CHARACTERS = [
+    "Yorai",
+    "Yutam",
+  ];
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
@@ -206,6 +255,12 @@
   const nameOverlay = document.getElementById("nameOverlay");
   const namePromptInput = document.getElementById("namePromptInput");
   const namePromptBtn = document.getElementById("namePromptBtn");
+
+  // Character overlay elements
+  const charOverlay = document.getElementById("charOverlay");
+  const charGrid = document.getElementById("charGrid");
+  const charNote = document.getElementById("charNote");
+  const charBackBtn = document.getElementById("charBackBtn");
 
   // ---------- NAME (always prompt; prefill last) ----------
   const NAME_KEY = "snake:name";
@@ -237,7 +292,83 @@
     nameAccepted = true;
     hideNamePrompt();
 
-    // Start immediately
+    // Next step: character select (then start game)
+    showCharPromptAlways();
+    elNetStatus.textContent = "Pick a character to continue.";
+  }
+
+  namePromptBtn.onclick = () => { acceptNameFromPrompt(); };
+  namePromptInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") acceptNameFromPrompt();
+  });
+  // Clicking the dark backdrop does NOT auto-accept; keep forcing a deliberate action.
+
+  // Images
+  // ---------- CHARACTER (prompt after name; prefill last) ----------
+  const CHAR_KEY = "snake:char";
+  let charAccepted = false;
+  let currentChar = null; // folder name
+
+  function sanitizeChar(c){
+    c = String(c || "").trim();
+    return CHARACTERS.includes(c) ? c : (CHARACTERS[0] || "default");
+  }
+  function getSavedChar(){
+    return sanitizeChar(localStorage.getItem(CHAR_KEY) || "");
+  }
+  function setSavedChar(c){
+    const v = sanitizeChar(c);
+    localStorage.setItem(CHAR_KEY, v);
+    return v;
+  }
+
+  function showCharPromptAlways(){
+    charOverlay.classList.add("show");
+    charAccepted = false;
+    buildCharGrid();
+  }
+  function hideCharPrompt(){
+    charOverlay.classList.remove("show");
+  }
+
+  function buildCharGrid(){
+    charGrid.innerHTML = "";
+    const saved = getSavedChar();
+    charNote.textContent = saved ? `Last used: ${saved}` : "";
+
+    for (const folder of CHARACTERS){
+      const card = document.createElement("div");
+      card.className = "char-card";
+      card.tabIndex = 0;
+
+      const img = document.createElement("img");
+      img.className = "char-thumb";
+      img.alt = folder;
+      img.src = `${folder}/snake.png`;
+
+      const meta = document.createElement("div");
+      meta.innerHTML = `
+        <div style="font-weight:800;font-size:16px;">${folder}</div>
+        <div class="muted" style="margin-top:2px;">Click to play</div>
+      `;
+
+      const pick = async () => { await acceptChar(folder); };
+      card.onclick = pick;
+      card.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
+
+      card.appendChild(img);
+      card.appendChild(meta);
+      charGrid.appendChild(card);
+    }
+  }
+
+  async function acceptChar(folder){
+    currentChar = setSavedChar(folder);
+    charAccepted = true;
+    applyCharacterAssets(currentChar);
+    hideCharPrompt();
+
+    // Start immediately after picking character
     try {
       elNetStatus.textContent = "Creating session…";
       const s = await newSession();
@@ -252,25 +383,60 @@
     }
   }
 
-  namePromptBtn.onclick = () => { acceptNameFromPrompt(); };
-  namePromptInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") acceptNameFromPrompt();
-  });
-  // Clicking the dark backdrop does NOT auto-accept; keep forcing a deliberate action.
+  charBackBtn.onclick = () => {
+    hideCharPrompt();
+    showNamePromptAlways();
+    elNetStatus.textContent = "Enter your name to continue.";
+  };
 
-  // Images
-  const imgSnake = new Image(); imgSnake.src = "snake.png";
-  const imgFood  = new Image(); imgFood.src  = "food.png";
-  const imgBonus = new Image(); imgBonus.src = "bonus.png";
+  // Images (set by character)
+  const imgSnake = new Image();
+  const imgFood  = new Image();
+  const imgBonus = new Image();
   const hasImg = (img) => img && img.complete && img.naturalWidth > 0;
 
-  // Sounds
-  const sEat0 = new Audio("eat0.mp3");
-  const sEat1 = new Audio("eat1.mp3");
-  const sBonus = new Audio("bonus.mp3");
-  const sLose = new Audio("lose.mp3");
+  // Sounds (set by character)
+  let sEats = [], sBonus = null, sLose = null;
   let muted = false;
   let eatFlip = 0;
+
+  function applyCharacterAssets(folder){
+    // images
+    imgSnake.src = `${folder}/snake.png`;
+    imgBonus.src = `${folder}/bonus.png`;
+
+    // food.png vs foog.png (typo-safe)
+    imgFood.onerror = () => { imgFood.onerror = null; imgFood.src = `${folder}/foog.png`; };
+    imgFood.src = `${folder}/food.png`;
+
+    // sounds
+    // Support eat0..eat4 (1..5 files). Keep eat0 always as fallback.
+    sEats = [];
+    eatFlip = 0;
+
+    for (let i = 0; i < 5; i++) {
+      const a = new Audio(`${folder}/eat${i}.mp3`);
+      // If a file doesn't exist, it will error; we just ignore it.
+      a.preload = "auto";
+      a.addEventListener("error", () => {
+        // no-op: missing file, not added
+      }, { once: true });
+
+      // Best-effort detect: try to load metadata quickly; if it loads, keep it.
+      a.addEventListener("canplay", () => {
+        if (!sEats.includes(a)) sEats.push(a);
+      }, { once: true });
+    }
+
+    // Hard fallback: ensure eat0 exists in array even if events haven't fired yet.
+    // (This avoids allocating new Audio inside step()).
+    const fallbackEat0 = new Audio(`${folder}/eat0.mp3`);
+    fallbackEat0.preload = "auto";
+    sEats.unshift(fallbackEat0);
+
+    sBonus = new Audio(`${folder}/bonus.mp3`);
+    sLose  = new Audio(`${folder}/lose.mp3`);
+  }
 
   function play(sound) {
     if (muted) return;
@@ -394,6 +560,17 @@
     overlay.classList.remove("show");
   }
 
+  async function startSessionAndGame(){
+    elNetStatus.textContent = "Creating session…";
+    const s = await newSession();
+    hideOverlay();
+    resetGame(s.seed);
+    running = true;
+    paused = false;
+    startTicking();
+    render();
+  }
+
   function startTicking() {
     if (tickHandle) clearInterval(tickHandle);
 
@@ -411,13 +588,10 @@
   }
 
   playAgainBtn.onclick = () => {
+    // Allow choosing character on replay
     hideOverlay();
-    if (session?.seed != null) {
-      resetGame(session.seed);
-      running = true;
-      paused = false;
-      startTicking();
-    }
+    showCharPromptAlways();
+    elNetStatus.textContent = "Pick a character to play again.";
   };
   closeOverlayBtn.onclick = hideOverlay;
   overlay.addEventListener("click", (e) => { if (e.target === overlay) hideOverlay(); });
@@ -533,8 +707,10 @@
     if (willEatFood) {
       setScore(score + FOOD_SCORE);
 
-      play(eatFlip % 2 === 0 ? sEat0 : sEat1);
-      eatFlip++;
+      // Round-robin through available eat sounds (1..5).
+      // eat0 is always present as fallback.
+      const eat = sEats[(eatFlip++) % sEats.length];
+      play(eat);
 
       food = randomEmptyCell();
       maybeSpawnBonus();
@@ -557,8 +733,9 @@
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
 
-    // If name prompt is open, don't control the game
+    // If prompts are open, don't control the game
     if (nameOverlay.classList.contains("show")) return;
+    if (charOverlay.classList.contains("show")) return;
 
     if (k === " "){
       if (!running) return;
@@ -578,11 +755,10 @@
         return;
       }
 
+      // Allow choosing character on replay
       hideOverlay();
-      resetGame(session.seed);
-      running = true;
-      paused = false;
-      startTicking();
+      showCharPromptAlways();
+      elNetStatus.textContent = "Pick a character to restart.";
       return;
     }
 
@@ -676,18 +852,14 @@
         elNetStatus.textContent = "Enter your name to continue.";
         return;
       }
+      // Then always require a character this page load
+      if (!charAccepted) {
+        showCharPromptAlways();
+        elNetStatus.textContent = "Pick a character to continue.";
+        return;
+      }
 
-      elNetStatus.textContent = "Creating session…";
-      const s = await newSession();
-      hideOverlay();
-      resetGame(s.seed);
-      running = true;
-      paused = false;
-
-      if (tickHandle) clearInterval(tickHandle);
-      tickHandle = setInterval(step, TICK_MS);
-
-      render();
+      await startSessionAndGame();
     } catch (e) {
       elNetStatus.textContent = "Failed to start session. Is backend deployed?";
     }
@@ -697,6 +869,8 @@
 
   // ---------- INIT ----------
   // ALWAYS prompt on landing (prefilled with last value)
+  currentChar = getSavedChar();
+  applyCharacterAssets(currentChar);
   showNamePromptAlways();
   elNetStatus.textContent = "Enter your name to start.";
 
